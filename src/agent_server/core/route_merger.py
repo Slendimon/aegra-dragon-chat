@@ -118,8 +118,9 @@ def merge_exception_handlers(
 def update_openapi_spec(user_app: Starlette) -> None:
     """Update OpenAPI spec if user app is FastAPI.
 
-    If the user app is a FastAPI instance, its OpenAPI spec will be automatically
-    merged with Aegra's default spec when FastAPI generates the combined spec.
+    If the user app is a FastAPI instance, we need to include the core routers
+    directly in the app so they appear in the OpenAPI spec. FastAPI doesn't
+    automatically include routes from Mount objects in the OpenAPI spec.
 
     Args:
         user_app: User's FastAPI/Starlette application
@@ -128,9 +129,33 @@ def update_openapi_spec(user_app: Starlette) -> None:
         from fastapi import FastAPI
 
         if isinstance(user_app, FastAPI):
-            # FastAPI automatically merges routes into OpenAPI spec
-            # The /docs and /openapi.json endpoints will show both
-            # Aegra routes and custom routes
             logger.info(
-                "Custom FastAPI app detected - OpenAPI spec will include custom routes"
+                "Custom FastAPI app detected - including core routers in OpenAPI spec"
             )
+            # Import routers here to avoid circular imports
+            from src.agent_server.api.assistants import router as assistants_router
+            from src.agent_server.api.threads import router as threads_router
+            from src.agent_server.api.runs import router as runs_router
+            from src.agent_server.api.store import router as store_router
+
+            # Include routers directly in FastAPI app so they appear in OpenAPI spec
+            # The Mount will still handle routing and authentication middleware
+            # We check if routers are already included to avoid duplicates
+            existing_paths = {
+                getattr(route, "path", None)
+                for route in user_app.routes
+                if hasattr(route, "path")
+            }
+
+            # Only include routers if their paths aren't already present
+            # This prevents duplicates if the user has already included them
+            if "/assistants" not in existing_paths:
+                user_app.include_router(assistants_router, prefix="", tags=["Assistants"])
+            if "/threads" not in existing_paths:
+                user_app.include_router(threads_router, prefix="", tags=["Threads"])
+            if "/runs" not in existing_paths:
+                user_app.include_router(runs_router, prefix="", tags=["Runs"])
+            if "/store" not in existing_paths:
+                user_app.include_router(store_router, prefix="", tags=["Store"])
+
+            logger.info("Core Aegra routers included in OpenAPI spec")

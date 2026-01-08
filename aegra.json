@@ -3,7 +3,8 @@
     "agent": "./graphs/react_agent/graph.py:graph",
     "agent_hitl": "./graphs/react_agent_hitl/graph.py:graph",
     "subgraph_agent": "./graphs/subgraph_agent/graph.py:graph",
-    "subgraph_hitl_agent": "./graphs/subgraph_hitl_agent/graph.py:graph"
+    "subgraph_hitl_agent": "./graphs/subgraph_hitl_agent/graph.py:graph",
+    "dragon_chat_agent": "./graphs/dragon_chat_agent/dragon_chat_agent.py:agent"
   },
   "http": {
     "app": "./custom_routes_example.py:app"
