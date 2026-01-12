@@ -58,16 +58,14 @@ class Assistant(Base):
     )
 
     # Indexes for performance
+    # Note: idx_assistant_user_graph_config is created as a functional index
+    # using MD5 hash of config in migration 20260112170959 to avoid btree size limits
     __table_args__ = (
         Index("idx_assistant_user", "user_id"),
         Index("idx_assistant_user_assistant", "user_id", "assistant_id", unique=True),
-        Index(
-            "idx_assistant_user_graph_config",
-            "user_id",
-            "graph_id",
-            "config",
-            unique=True,
-        ),
+        # idx_assistant_user_graph_config is created via migration as functional index:
+        # CREATE UNIQUE INDEX idx_assistant_user_graph_config 
+        # ON assistant (user_id, graph_id, md5(config::text))
     )
 
 
