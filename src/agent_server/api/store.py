@@ -1,6 +1,7 @@
 """Store endpoints for Agent Protocol"""
 
-from typing import Union
+import json
+from typing import Any, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -18,6 +19,64 @@ from ..models import (
 router = APIRouter()
 
 
+def clean_unicode_surrogates(value: Any) -> Any:
+    """Recursively clean invalid Unicode surrogate pairs from data structures.
+    
+    PostgreSQL's JSON type is strict and rejects invalid surrogate pairs.
+    This function removes invalid Unicode surrogate characters to ensure
+    data can be safely stored as JSON.
+    
+    Args:
+        value: The value to clean (can be dict, list, str, or any JSON-serializable type)
+        
+    Returns:
+        The cleaned value with invalid surrogates removed
+    """
+    if isinstance(value, str):
+        # Remove invalid surrogate pairs
+        # High surrogates: U+D800 to U+DBFF
+        # Low surrogates: U+DC00 to U+DFFF
+        # Valid surrogate pairs encode characters outside the BMP (U+10000 to U+10FFFF)
+        cleaned_chars = []
+        i = 0
+        while i < len(value):
+            char = value[i]
+            code_point = ord(char)
+            
+            # Check if it's a high surrogate
+            if 0xD800 <= code_point <= 0xDBFF:
+                # Check if next char is a valid low surrogate
+                if i + 1 < len(value):
+                    next_code = ord(value[i + 1])
+                    if 0xDC00 <= next_code <= 0xDFFF:
+                        # Valid surrogate pair - keep both
+                        cleaned_chars.append(char)
+                        cleaned_chars.append(value[i + 1])
+                        i += 2
+                        continue
+                # Invalid: high surrogate without low surrogate - skip it
+                i += 1
+                continue
+            # Check if it's a low surrogate without preceding high surrogate
+            elif 0xDC00 <= code_point <= 0xDFFF:
+                # Invalid: low surrogate without high surrogate - skip it
+                i += 1
+                continue
+            else:
+                # Valid character - keep it
+                cleaned_chars.append(char)
+                i += 1
+        
+        return "".join(cleaned_chars)
+    elif isinstance(value, dict):
+        return {k: clean_unicode_surrogates(v) for k, v in value.items()}
+    elif isinstance(value, (list, tuple)):
+        return [clean_unicode_surrogates(item) for item in value]
+    else:
+        # For other types (int, float, bool, None), return as-is
+        return value
+
+
 @router.put("/store/items")
 async def put_store_item(
     request: StorePutRequest, user: User = Depends(get_current_user)
@@ -32,8 +91,12 @@ async def put_store_item(
 
     store = db_manager.get_store()
 
+    # Clean invalid Unicode surrogate pairs before storing
+    # PostgreSQL's JSON type is strict and rejects invalid surrogates
+    cleaned_value = clean_unicode_surrogates(request.value)
+
     await store.aput(
-        namespace=tuple(scoped_namespace), key=request.key, value=request.value
+        namespace=tuple(scoped_namespace), key=request.key, value=cleaned_value
     )
 
     return {"status": "stored"}

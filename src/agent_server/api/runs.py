@@ -946,12 +946,17 @@ async def execute_run_async(
         # Update status
         await update_run_status(run_id, "running", session=session)
 
+        # Get assistant_id from run record for store namespace scoping
+        run_stmt = select(RunORM).where(RunORM.run_id == run_id)
+        run_record = await session.scalar(run_stmt)
+        assistant_id = run_record.assistant_id if run_record else None
+
         # Get graph and execute
         langgraph_service = get_langgraph_service()
         graph = await langgraph_service.get_graph(graph_id)
 
         run_config = create_run_config(
-            run_id, thread_id, user, config or {}, checkpoint
+            run_id, thread_id, user, config or {}, checkpoint, assistant_id=assistant_id
         )
 
         # Handle human-in-the-loop fields
@@ -991,6 +996,19 @@ async def execute_run_async(
             stream_mode_list = [stream_mode]
         else:
             stream_mode_list = stream_mode.copy()
+
+        # Extract system_prompt from config and inject into context for middleware
+        # The middleware (dynamic_prompt) expects system_prompt in runtime.context
+        if context is None:
+            context = {}
+        if config:
+            # Check for system_prompt in config.prompt.system_prompt (nested structure)
+            prompt_config = config.get("prompt", {})
+            if isinstance(prompt_config, dict) and "system_prompt" in prompt_config:
+                context.setdefault("system_prompt", prompt_config["system_prompt"])
+            # Also check for system_prompt directly in config
+            elif "system_prompt" in config:
+                context.setdefault("system_prompt", config["system_prompt"])
 
         async with with_auth_ctx(user, []):
             # Stream events using the graph_streaming service

@@ -1,7 +1,7 @@
 services:
   # PostgreSQL database for LangGraph and metadata
   postgres:
-    image: postgres:15-alpine
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: user
       POSTGRES_PASSWORD: password

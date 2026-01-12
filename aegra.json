@@ -8,5 +8,12 @@
   },
   "http": {
     "app": "./custom_routes_example.py:app"
+  },
+  "store": {
+    "index": {
+      "dims": 1536,
+      "embed": "openai:text-embedding-3-small",
+      "fields": ["$"]
+    }
   }
 }

@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv run python:*)",
+      "Bash(uv pip:*)",
+      "Bash(docker compose:*)",
+      "WebSearch",
+      "WebFetch(domain:reference.langchain.com)",
+      "Bash(findstr:*)",
+      "Bash(curl:*)",
+      "Bash(docker logs:*)",
+      "Bash(del \"C:\\\\Users\\\\MSI CYBORG\\\\Desktop\\\\Projects\\\\seller.ai\\\\aegra-dragon-chat\\\\test_tool_schema.py\")",
+      "Bash(set OPENAI_API_KEY=fake-key)"
+    ]
+  }
+}

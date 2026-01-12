@@ -12,6 +12,10 @@ from graphs.dragon_chat_agent.middleware.pre_agent_middleware import (
 from graphs.dragon_chat_agent.middleware.dynamic_prompt import inject_dynamic_prompt
 from graphs.dragon_chat_agent.middleware.trim_messages import trim_messages
 from graphs.dragon_chat_agent.utils.load_model import load_chat_model
+from graphs.dragon_chat_agent.tools.knowledge_base_tools import (
+    search_knowledge_base,
+    store_knowledge,
+)
 
 callbacks = get_callbacks()
 
@@ -27,7 +31,7 @@ def _placeholder_dynamic_router() -> str:
 
 agent = create_agent(
     model=default_model,
-    tools=[_placeholder_dynamic_router],
+    tools=[_placeholder_dynamic_router, search_knowledge_base, store_knowledge],
     context_schema=DragonAgentContext,
     middleware=[inject_dynamic_prompt, PreAgentMiddleware(), trim_messages],
 ).with_config({"callbacks": callbacks})

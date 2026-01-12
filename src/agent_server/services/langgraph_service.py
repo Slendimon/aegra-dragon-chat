@@ -344,6 +344,7 @@ def create_run_config(
     user,
     additional_config: dict = None,
     checkpoint: dict | None = None,
+    assistant_id: str | None = None,
 ) -> dict:
     """Create LangGraph configuration for a specific run with full context.
 
@@ -361,6 +362,16 @@ def create_run_config(
     # Merge server-provided fields (do NOT overwrite if client already set)
     cfg["configurable"].setdefault("thread_id", thread_id)
     cfg["configurable"].setdefault("run_id", run_id)
+
+    # Inject assistant_id for tool filtering (e.g., store namespace scoping)
+    if assistant_id:
+        cfg["configurable"].setdefault("assistant_id", assistant_id)
+
+    # Inject store instance for tools to access semantic search
+    # Store is needed for tools like search_knowledge_base that filter by assistant_id
+    if "store" not in cfg:
+        from ..core.database import db_manager
+        cfg["store"] = db_manager.get_store()
 
     # Add observability callbacks from various potential sources
     tracing_callbacks = get_tracing_callbacks()

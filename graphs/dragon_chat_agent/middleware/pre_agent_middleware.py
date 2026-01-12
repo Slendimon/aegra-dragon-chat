@@ -99,12 +99,22 @@ class PreAgentMiddleware(AgentMiddleware):
                 updated_state = {**request.state, "messages": cleaned_messages}
                 request = request.override(state=updated_state)
 
-        overrides = {"tools": tool_specs}
-        overrides["tool_choice"] = self._resolve_tool_choice(
-            request.state, tool_specs, request.tool_choice
-        )
-        updated_request = request.override(**overrides)
-        return handler(updated_request)
+        # Only override tools if there are dynamic tools to add
+        # Don't override if tool_specs is empty - keep the existing static tools
+        overrides = {}
+        if tool_specs:
+            # Combine existing tools with dynamic tools
+            existing_tools = request.tools or []
+            combined_tools = list(existing_tools) + tool_specs
+            overrides["tools"] = combined_tools
+            overrides["tool_choice"] = self._resolve_tool_choice(
+                request.state, tool_specs, request.tool_choice
+            )
+
+        if overrides:
+            updated_request = request.override(**overrides)
+            return handler(updated_request)
+        return handler(request)
 
     async def awrap_model_call(
         self, request: ModelRequest, handler
@@ -121,12 +131,22 @@ class PreAgentMiddleware(AgentMiddleware):
                 updated_state = {**request.state, "messages": cleaned_messages}
                 request = request.override(state=updated_state)
 
-        overrides = {"tools": tool_specs}
-        overrides["tool_choice"] = self._resolve_tool_choice(
-            request.state, tool_specs, request.tool_choice
-        )
-        updated_request = request.override(**overrides)
-        return await handler(updated_request)
+        # Only override tools if there are dynamic tools to add
+        # Don't override if tool_specs is empty - keep the existing static tools
+        overrides = {}
+        if tool_specs:
+            # Combine existing tools with dynamic tools
+            existing_tools = request.tools or []
+            combined_tools = list(existing_tools) + tool_specs
+            overrides["tools"] = combined_tools
+            overrides["tool_choice"] = self._resolve_tool_choice(
+                request.state, tool_specs, request.tool_choice
+            )
+
+        if overrides:
+            updated_request = request.override(**overrides)
+            return await handler(updated_request)
+        return await handler(request)
 
     def _lookup_runtime_tool(self, request) -> Any | None:
         runtime_context = getattr(request.runtime, "context", None)
