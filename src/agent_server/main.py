@@ -169,7 +169,17 @@ if http_config and http_config.get("app"):
     try:
         user_app = load_custom_app(http_config["app"])
         logger.info("Custom app loaded successfully")
+    except FileNotFoundError as e:
+        # If custom app file doesn't exist, log warning and continue without it
+        # This allows the server to start even if the custom routes file is missing
+        logger.warning(
+            f"Custom app file not found: {e}. "
+            "Server will start without custom routes. "
+            "If you don't need custom routes, remove the 'app' field from http config in aegra.json"
+        )
     except Exception as e:
+        # For other errors (ImportError, AttributeError, etc.), log and raise
+        # These indicate actual configuration problems
         logger.error(f"Failed to load custom app: {e}", exc_info=True)
         raise
 

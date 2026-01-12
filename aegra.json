@@ -6,9 +6,6 @@
     "subgraph_hitl_agent": "./graphs/subgraph_hitl_agent/graph.py:graph",
     "dragon_chat_agent": "./graphs/dragon_chat_agent/dragon_chat_agent.py:agent"
   },
-  "http": {
-    "app": "./custom_routes_example.py:app"
-  },
   "store": {
     "index": {
       "dims": 1536,
