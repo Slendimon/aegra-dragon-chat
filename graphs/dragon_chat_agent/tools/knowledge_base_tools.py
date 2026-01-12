@@ -25,10 +25,20 @@ async def search_knowledge_base(
     Returns:
         Texto con los resultados encontrados o mensaje de error
     """
-    # Obtener el assistant_id desde el config de LangGraph
+    # Obtener el config de LangGraph
     config = get_config()
-    assistant_id = config.get("configurable", {}).get("assistant_id")
-    print(f"Assistant ID: {assistant_id}")
+    
+    # Intentar obtener external_assistant_id del metadata en configurable
+    configurable = config.get("configurable", {})
+    metadata = configurable.get("metadata", {})
+    external_assistant_id = metadata.get("external_assistant_id") if isinstance(metadata, dict) else None
+    
+    # Si no hay external_assistant_id, usar el assistant_id local
+    assistant_id = external_assistant_id or configurable.get("assistant_id")
+    
+    print(f"Assistant ID (local): {configurable.get('assistant_id')}")
+    print(f"External Assistant ID: {external_assistant_id}")
+    print(f"Using Assistant ID for namespace: {assistant_id}")
 
     if not assistant_id:
         return "Error: No se identificó el asistente. Verifica que el sistema esté configurado correctamente."
@@ -81,9 +91,16 @@ async def store_knowledge(
     Returns:
         Mensaje de confirmación con el ID del conocimiento almacenado
     """
-    # Obtener el assistant_id desde el config de LangGraph
+    # Obtener el config de LangGraph
     config = get_config()
-    assistant_id = config.get("configurable", {}).get("assistant_id")
+    configurable = config.get("configurable", {})
+    
+    # Intentar obtener external_assistant_id del metadata en configurable
+    metadata = configurable.get("metadata", {})
+    external_assistant_id = metadata.get("external_assistant_id") if isinstance(metadata, dict) else None
+    
+    # Si no hay external_assistant_id, usar el assistant_id local
+    assistant_id = external_assistant_id or configurable.get("assistant_id")
 
     if not assistant_id:
         return "Error: No se identificó el asistente. No puedo almacenar el conocimiento."

@@ -20,7 +20,8 @@ def inject_dynamic_prompt(request: ModelRequest) -> str:
     into the runtime context by execute_run_async before graph execution.
     """
     ctx = getattr(request.runtime, "context", None)
-
+    metadata = getattr(request.runtime, "metadata", None)
+    print(f"Metadata: {metadata}")
     # Priority 1: Check if system_prompt exists in runtime context
     # The context receives system_prompt from assistant.config via execute_run_async
     base_prompt = None

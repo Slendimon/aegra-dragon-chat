@@ -958,6 +958,13 @@ async def execute_run_async(
         run_config = create_run_config(
             run_id, thread_id, user, config or {}, checkpoint, assistant_id=assistant_id
         )
+        
+        # Inject metadata from context into configurable so tools can access it
+        # This allows tools to get external_assistant_id from context.metadata
+        if context and isinstance(context, dict):
+            metadata = context.get("metadata", {})
+            if metadata and isinstance(metadata, dict):
+                run_config.setdefault("configurable", {}).setdefault("metadata", {}).update(metadata)
 
         # Handle human-in-the-loop fields
         if interrupt_before is not None:
