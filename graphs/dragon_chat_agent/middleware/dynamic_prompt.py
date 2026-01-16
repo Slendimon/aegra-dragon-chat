@@ -4,6 +4,7 @@ from graphs.dragon_chat_agent.context import DragonAgentContext
 from graphs.dragon_chat_agent.prompts import DEFAULT_SYSTEM_PROMPT
 from graphs.dragon_chat_agent.utils.context_builder import (
     build_datetime_context_section,
+    build_knowledge_base_instructions,
     build_user_context_section,
 )
 
@@ -47,4 +48,17 @@ def inject_dynamic_prompt(request: ModelRequest) -> str:
     # Add datetime context section
     datetime_context = build_datetime_context_section()
 
-    return base_prompt + user_context + datetime_context
+    # Check if assistant has knowledge base (from metadata)
+    has_knowledge_base = False
+    if isinstance(ctx, DragonAgentContext):
+        if ctx.metadata and isinstance(ctx.metadata, dict):
+            has_knowledge_base = ctx.metadata.get("has_knowledge_base", False)
+    elif isinstance(ctx, dict):
+        metadata = ctx.get("metadata", {})
+        if metadata and isinstance(metadata, dict):
+            has_knowledge_base = metadata.get("has_knowledge_base", False)
+
+    # Add knowledge base instructions only if assistant has KB
+    knowledge_instructions = build_knowledge_base_instructions(has_knowledge_base)
+
+    return base_prompt + user_context + datetime_context + knowledge_instructions

@@ -56,10 +56,34 @@ def build_user_context_section(metadata: Dict[str, Any]) -> str:
 def build_datetime_context_section() -> str:
     """
     Build a datetime context section with current Zulu time.
-    
+
     Returns:
         Formatted string with current date and time information
     """
     current_datetime = get_current_zulu_datetime()
     return f"\n\n## Información de contexto:\n- Fecha y hora actual: {current_datetime}\n"
+
+
+def build_knowledge_base_instructions(has_knowledge_base: bool = False) -> str:
+    """
+    Build instructions for using the knowledge base.
+
+    Args:
+        has_knowledge_base: Whether the assistant has documents in its knowledge base
+
+    Returns:
+        Formatted string with knowledge base usage instructions, or empty if no KB
+    """
+    if not has_knowledge_base:
+        return ""
+
+    return """
+
+## Instrucciones de Base de Conocimientos
+IMPORTANTE: Tienes acceso a una base de conocimientos específica mediante la herramienta `search_knowledge_base`.
+- SIEMPRE busca en la base de conocimientos PRIMERO cuando el usuario haga preguntas sobre productos, servicios, políticas, procedimientos, o cualquier información que pueda estar documentada.
+- Usa el resultado de la búsqueda como FUENTE PRINCIPAL de tu respuesta.
+- Si la búsqueda retorna resultados relevantes, DEBES basar tu respuesta en esa información.
+- Solo responde con conocimiento general si la búsqueda no encuentra información relevante.
+"""
 
