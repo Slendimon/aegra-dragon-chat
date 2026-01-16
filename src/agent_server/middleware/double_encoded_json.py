@@ -47,18 +47,23 @@ class DoubleEncodedJSONMiddleware:
 
                                 new_body = json.dumps(parsed).encode("utf-8")
 
-                                if (
-                                    b"content-type" in headers
-                                    and content_type != "application/json"
-                                ):
-                                    new_headers = []
-                                    for name, value in scope.get("headers", []):
-                                        if name != b"content-type":
-                                            new_headers.append((name, value))
-                                    new_headers.append(
-                                        (b"content-type", b"application/json")
-                                    )
-                                    scope["headers"] = new_headers
+                                # Update headers: content-type and content-length
+                                new_headers = []
+                                for name, value in scope.get("headers", []):
+                                    # Skip headers we're going to replace
+                                    if name in (b"content-type", b"content-length"):
+                                        continue
+                                    new_headers.append((name, value))
+
+                                # Always set correct content-type
+                                new_headers.append(
+                                    (b"content-type", b"application/json")
+                                )
+                                # Update content-length to match new body size
+                                new_headers.append(
+                                    (b"content-length", str(len(new_body)).encode())
+                                )
+                                scope["headers"] = new_headers
 
                                 return {
                                     "type": "http.request",
