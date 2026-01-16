@@ -176,6 +176,28 @@ class PreAgentMiddleware(AgentMiddleware):
 
         return []
 
+    def _ensure_context_from_request(self, request) -> DragonAgentContext | None:
+        """Get or create DragonAgentContext from request runtime."""
+        runtime_context = getattr(request.runtime, "context", None)
+
+        if isinstance(runtime_context, DragonAgentContext):
+            return runtime_context
+
+        if isinstance(runtime_context, dict):
+            # Try to convert dict to DragonAgentContext
+            try:
+                return DragonAgentContext(
+                    system_prompt=runtime_context.get("system_prompt"),
+                    tools=runtime_context.get("tools", []),
+                    dynamic_tools=runtime_context.get("dynamic_tools", {}),
+                    metadata=runtime_context.get("metadata", {}),
+                )
+            except Exception as exc:
+                logger.warning("Failed to create DragonAgentContext from dict: %s", exc)
+                return None
+
+        return None
+
     def wrap_tool_call(self, request, handler):
         tool_name = request.tool_call["name"]
         tool_call_id = request.tool_call["id"]
@@ -186,8 +208,25 @@ class PreAgentMiddleware(AgentMiddleware):
             tool_call_id,
         )
 
+        # First try to lookup in existing dynamic_tools
         tool = self._lookup_runtime_tool(request)
         available_tools = self._get_available_dynamic_tools(request)
+
+        # If not found, try to rebuild dynamic tools from context
+        # This handles the case where context.dynamic_tools was lost between model call and tool call
+        if tool is None and not available_tools:
+            logger.info("No dynamic_tools found, attempting to rebuild from context.tools")
+            context = self._ensure_context_from_request(request)
+            if context and context.tools:
+                dynamic_tools, _ = self._build_runtime_tooling(context)
+                context.dynamic_tools = dynamic_tools
+                tool = dynamic_tools.get(tool_name)
+                available_tools = list(dynamic_tools.keys())
+                logger.info(
+                    "Rebuilt dynamic_tools: found=%s, available=%s",
+                    tool is not None,
+                    available_tools,
+                )
 
         logger.info(
             "Tool lookup result: found=%s, available_dynamic_tools=%s",
@@ -246,8 +285,25 @@ class PreAgentMiddleware(AgentMiddleware):
             tool_call_id,
         )
 
+        # First try to lookup in existing dynamic_tools
         tool = self._lookup_runtime_tool(request)
         available_tools = self._get_available_dynamic_tools(request)
+
+        # If not found, try to rebuild dynamic tools from context
+        # This handles the case where context.dynamic_tools was lost between model call and tool call
+        if tool is None and not available_tools:
+            logger.info("No dynamic_tools found, attempting to rebuild from context.tools")
+            context = self._ensure_context_from_request(request)
+            if context and context.tools:
+                dynamic_tools, _ = self._build_runtime_tooling(context)
+                context.dynamic_tools = dynamic_tools
+                tool = dynamic_tools.get(tool_name)
+                available_tools = list(dynamic_tools.keys())
+                logger.info(
+                    "Rebuilt dynamic_tools: found=%s, available=%s",
+                    tool is not None,
+                    available_tools,
+                )
 
         logger.info(
             "Tool lookup result: found=%s, available_dynamic_tools=%s",
