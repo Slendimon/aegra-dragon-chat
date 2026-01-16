@@ -177,29 +177,47 @@ class PreAgentMiddleware(AgentMiddleware):
         return []
 
     def wrap_tool_call(self, request, handler):
-        tool = self._lookup_runtime_tool(request)
         tool_name = request.tool_call["name"]
         tool_call_id = request.tool_call["id"]
 
+        logger.info(
+            "wrap_tool_call invoked for tool '%s', tool_call_id='%s'",
+            tool_name,
+            tool_call_id,
+        )
+
+        tool = self._lookup_runtime_tool(request)
+        available_tools = self._get_available_dynamic_tools(request)
+
+        logger.info(
+            "Tool lookup result: found=%s, available_dynamic_tools=%s",
+            tool is not None,
+            available_tools,
+        )
+
         if tool is None:
             # Try the default handler for static tools
+            logger.info("Tool '%s' not in dynamic_tools, trying static handler", tool_name)
             try:
                 return handler(request)
-            except KeyError as exc:
+            except Exception as exc:
                 # Tool not found in static tools either - return error message
                 logger.error(
                     "Tool '%s' not found in dynamic_tools or static tools. "
-                    "Available dynamic tools: %s",
+                    "Available dynamic tools: %s. Error: %s (%s)",
                     tool_name,
-                    list(self._get_available_dynamic_tools(request)),
+                    available_tools,
+                    exc,
+                    type(exc).__name__,
                 )
                 return ToolMessage(
-                    content=f"Error: Tool '{tool_name}' is not available. The tool may not be configured correctly.",
+                    content=f"Error: Tool '{tool_name}' is not available. The tool may not be configured correctly or the context was lost.",
                     name=tool_name,
                     tool_call_id=tool_call_id,
                     status="error",
                 )
 
+        logger.info("Executing dynamic tool '%s'", tool_name)
         try:
             result = tool.invoke(request.tool_call["args"])
         except Exception as exc:  # noqa: BLE001
@@ -211,6 +229,7 @@ class PreAgentMiddleware(AgentMiddleware):
                 status="error",
             )
 
+        logger.info("Dynamic tool '%s' completed successfully", tool_name)
         return ToolMessage(
             content=msg_content_output(result),
             name=tool_name,
@@ -218,29 +237,47 @@ class PreAgentMiddleware(AgentMiddleware):
         )
 
     async def awrap_tool_call(self, request, handler):
-        tool = self._lookup_runtime_tool(request)
         tool_name = request.tool_call["name"]
         tool_call_id = request.tool_call["id"]
 
+        logger.info(
+            "awrap_tool_call invoked for tool '%s', tool_call_id='%s'",
+            tool_name,
+            tool_call_id,
+        )
+
+        tool = self._lookup_runtime_tool(request)
+        available_tools = self._get_available_dynamic_tools(request)
+
+        logger.info(
+            "Tool lookup result: found=%s, available_dynamic_tools=%s",
+            tool is not None,
+            available_tools,
+        )
+
         if tool is None:
             # Try the default handler for static tools
+            logger.info("Tool '%s' not in dynamic_tools, trying static handler", tool_name)
             try:
                 return await handler(request)
-            except KeyError as exc:
+            except Exception as exc:
                 # Tool not found in static tools either - return error message
                 logger.error(
                     "Tool '%s' not found in dynamic_tools or static tools. "
-                    "Available dynamic tools: %s",
+                    "Available dynamic tools: %s. Error: %s (%s)",
                     tool_name,
-                    list(self._get_available_dynamic_tools(request)),
+                    available_tools,
+                    exc,
+                    type(exc).__name__,
                 )
                 return ToolMessage(
-                    content=f"Error: Tool '{tool_name}' is not available. The tool may not be configured correctly.",
+                    content=f"Error: Tool '{tool_name}' is not available. The tool may not be configured correctly or the context was lost.",
                     name=tool_name,
                     tool_call_id=tool_call_id,
                     status="error",
                 )
 
+        logger.info("Executing dynamic tool '%s'", tool_name)
         try:
             result = await tool.ainvoke(request.tool_call["args"])
         except Exception as exc:  # noqa: BLE001
@@ -252,6 +289,7 @@ class PreAgentMiddleware(AgentMiddleware):
                 status="error",
             )
 
+        logger.info("Dynamic tool '%s' completed successfully", tool_name)
         return ToolMessage(
             content=msg_content_output(result),
             name=tool_name,
