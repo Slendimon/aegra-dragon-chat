@@ -35,64 +35,75 @@ class DoubleEncodedJSONMiddleware:
         headers = dict(scope.get("headers", []))
         content_type = headers.get(b"content-type", b"").decode("latin1")
 
-        if method in ["POST", "PUT", "PATCH"] and content_type:
+        # Only process JSON content types for POST/PUT/PATCH
+        if method in ["POST", "PUT", "PATCH"] and "application/json" in content_type:
+            # First, collect the entire body
             body_parts = []
-
-            async def receive_wrapper() -> dict:
+            while True:
                 message = await receive()
                 if message["type"] == "http.request":
                     body_parts.append(message.get("body", b""))
-
                     if not message.get("more_body", False):
-                        body = b"".join(body_parts)
+                        break
+                elif message["type"] == "http.disconnect":
+                    # Client disconnected, pass through
+                    await self.app(scope, receive, send)
+                    return
 
-                        if body:
-                            try:
-                                decoded = body.decode("utf-8")
-                                parsed = json.loads(decoded)
+            body = b"".join(body_parts)
+            processed_body = body  # Default: unchanged
 
-                                # Only re-serialize if the JSON was double-encoded
-                                # (i.e., the first parse returned a string)
-                                if isinstance(parsed, str):
-                                    # Double-encoded: parse again and re-serialize
-                                    parsed = json.loads(parsed)
-                                    new_body = json.dumps(parsed).encode("utf-8")
+            if body:
+                try:
+                    decoded = body.decode("utf-8")
+                    parsed = json.loads(decoded)
 
-                                    # Update headers for the new body
-                                    new_headers = []
-                                    for name, value in scope.get("headers", []):
-                                        if name in (b"content-type", b"content-length"):
-                                            continue
-                                        new_headers.append((name, value))
+                    # Only re-serialize if the JSON was double-encoded
+                    # (i.e., the first parse returned a string)
+                    if isinstance(parsed, str):
+                        # Double-encoded: parse again and re-serialize
+                        inner_parsed = json.loads(parsed)
+                        processed_body = json.dumps(inner_parsed).encode("utf-8")
+                        logger.debug(
+                            "Detected and fixed double-encoded JSON",
+                            path=path,
+                            original_length=len(body),
+                            new_length=len(processed_body),
+                        )
+                except (json.JSONDecodeError, ValueError, UnicodeDecodeError) as e:
+                    # Not valid JSON or not double-encoded, pass through unchanged
+                    logger.debug(
+                        "JSON processing skipped",
+                        path=path,
+                        error=str(e),
+                    )
 
-                                    new_headers.append(
-                                        (b"content-type", b"application/json")
-                                    )
-                                    new_headers.append(
-                                        (b"content-length", str(len(new_body)).encode())
-                                    )
-                                    scope["headers"] = new_headers
+            # Update content-length header if body changed
+            if processed_body != body:
+                new_headers = [
+                    (name, value)
+                    for name, value in scope.get("headers", [])
+                    if name.lower() not in (b"content-length",)
+                ]
+                new_headers.append(
+                    (b"content-length", str(len(processed_body)).encode())
+                )
+                scope["headers"] = new_headers
 
-                                    return {
-                                        "type": "http.request",
-                                        "body": new_body,
-                                        "more_body": False,
-                                    }
+            # Create a receive function that returns the processed body once
+            body_sent = False
 
-                                # JSON was NOT double-encoded - pass through unchanged
-                                return {
-                                    "type": "http.request",
-                                    "body": body,
-                                    "more_body": False,
-                                }
-                            except (
-                                json.JSONDecodeError,
-                                ValueError,
-                                UnicodeDecodeError,
-                            ):
-                                pass
-
-                return message
+            async def receive_wrapper() -> dict:
+                nonlocal body_sent
+                if not body_sent:
+                    body_sent = True
+                    return {
+                        "type": "http.request",
+                        "body": processed_body,
+                        "more_body": False,
+                    }
+                # After body is sent, wait for disconnect
+                return await receive()
 
             await self.app(scope, receive_wrapper, send)
         else:
