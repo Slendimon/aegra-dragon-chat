@@ -162,10 +162,43 @@ class PreAgentMiddleware(AgentMiddleware):
 
         return None
 
+    def _get_available_dynamic_tools(self, request) -> List[str]:
+        """Get list of available dynamic tool names for debugging."""
+        runtime_context = getattr(request.runtime, "context", None)
+
+        if isinstance(runtime_context, DragonAgentContext):
+            return list(runtime_context.dynamic_tools.keys())
+
+        if isinstance(runtime_context, dict):
+            dynamic_tools = runtime_context.get("dynamic_tools") or {}
+            if isinstance(dynamic_tools, dict):
+                return list(dynamic_tools.keys())
+
+        return []
+
     def wrap_tool_call(self, request, handler):
         tool = self._lookup_runtime_tool(request)
+        tool_name = request.tool_call["name"]
+        tool_call_id = request.tool_call["id"]
+
         if tool is None:
-            return handler(request)
+            # Try the default handler for static tools
+            try:
+                return handler(request)
+            except KeyError as exc:
+                # Tool not found in static tools either - return error message
+                logger.error(
+                    "Tool '%s' not found in dynamic_tools or static tools. "
+                    "Available dynamic tools: %s",
+                    tool_name,
+                    list(self._get_available_dynamic_tools(request)),
+                )
+                return ToolMessage(
+                    content=f"Error: Tool '{tool_name}' is not available. The tool may not be configured correctly.",
+                    name=tool_name,
+                    tool_call_id=tool_call_id,
+                    status="error",
+                )
 
         try:
             result = tool.invoke(request.tool_call["args"])
@@ -173,21 +206,40 @@ class PreAgentMiddleware(AgentMiddleware):
             logger.warning("Dynamic tool %s failed: %s", tool.name, exc)
             return ToolMessage(
                 content=str(exc),
-                name=request.tool_call["name"],
-                tool_call_id=request.tool_call["id"],
+                name=tool_name,
+                tool_call_id=tool_call_id,
                 status="error",
             )
 
         return ToolMessage(
             content=msg_content_output(result),
-            name=request.tool_call["name"],
-            tool_call_id=request.tool_call["id"],
+            name=tool_name,
+            tool_call_id=tool_call_id,
         )
 
     async def awrap_tool_call(self, request, handler):
         tool = self._lookup_runtime_tool(request)
+        tool_name = request.tool_call["name"]
+        tool_call_id = request.tool_call["id"]
+
         if tool is None:
-            return await handler(request)
+            # Try the default handler for static tools
+            try:
+                return await handler(request)
+            except KeyError as exc:
+                # Tool not found in static tools either - return error message
+                logger.error(
+                    "Tool '%s' not found in dynamic_tools or static tools. "
+                    "Available dynamic tools: %s",
+                    tool_name,
+                    list(self._get_available_dynamic_tools(request)),
+                )
+                return ToolMessage(
+                    content=f"Error: Tool '{tool_name}' is not available. The tool may not be configured correctly.",
+                    name=tool_name,
+                    tool_call_id=tool_call_id,
+                    status="error",
+                )
 
         try:
             result = await tool.ainvoke(request.tool_call["args"])
@@ -195,13 +247,13 @@ class PreAgentMiddleware(AgentMiddleware):
             logger.warning("Dynamic tool %s failed: %s", tool.name, exc)
             return ToolMessage(
                 content=str(exc),
-                name=request.tool_call["name"],
-                tool_call_id=request.tool_call["id"],
+                name=tool_name,
+                tool_call_id=tool_call_id,
                 status="error",
             )
 
         return ToolMessage(
             content=msg_content_output(result),
-            name=request.tool_call["name"],
-            tool_call_id=request.tool_call["id"],
+            name=tool_name,
+            tool_call_id=tool_call_id,
         )
