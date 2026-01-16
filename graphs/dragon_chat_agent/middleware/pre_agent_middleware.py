@@ -31,11 +31,11 @@ class PreAgentMiddleware(AgentMiddleware):
         return tools_cfg
 
     @staticmethod
-    def _to_llm_tool_spec(cfg: dict[str, Any]) -> dict[str, Any]:
+    def _to_llm_tool_spec(cfg: dict[str, Any], *, tool_name: str | None = None) -> dict[str, Any]:
         return {
             "type": "function",
             "function": {
-                "name": cfg["name"],
+                "name": tool_name or cfg["name"],
                 "description": cfg.get("description", ""),
                 "parameters": cfg.get("schema", {"type": "object", "properties": {}}),
             },
@@ -55,7 +55,8 @@ class PreAgentMiddleware(AgentMiddleware):
                 continue
 
             dynamic_tools[tool.name] = tool
-            tool_specs.append(self._to_llm_tool_spec(cfg))
+            # IMPORTANT: use the *actual* built tool name (may be sanitized for provider compatibility)
+            tool_specs.append(self._to_llm_tool_spec(cfg, tool_name=tool.name))
 
         return dynamic_tools, tool_specs
 

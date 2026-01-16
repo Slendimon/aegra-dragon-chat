@@ -10,7 +10,9 @@
       "Bash(curl:*)",
       "Bash(docker logs:*)",
       "Bash(del \"C:\\\\Users\\\\MSI CYBORG\\\\Desktop\\\\Projects\\\\seller.ai\\\\aegra-dragon-chat\\\\test_tool_schema.py\")",
-      "Bash(set OPENAI_API_KEY=fake-key)"
+      "Bash(set OPENAI_API_KEY=fake-key)",
+      "Bash(uv run pytest:*)",
+      "Bash(echo:*)"
     ]
   }
 }
