@@ -1,4 +1,4 @@
-import logging
+import structlog
 from typing import Any, Dict, Iterable, List
 
 from langchain.agents.middleware import AgentMiddleware
@@ -10,7 +10,7 @@ from graphs.dragon_chat_agent.context import DragonAgentContext
 from graphs.dragon_chat_agent.utils.message_validator import validate_and_clean_messages
 from graphs.dragon_chat_agent.tools import build_tool_from_config
 
-logger = logging.getLogger(__name__)
+logger = structlog.getLogger(__name__)
 
 
 class PreAgentMiddleware(AgentMiddleware):
