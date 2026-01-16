@@ -17,8 +17,17 @@ class DoubleEncodedJSONMiddleware:
     def __init__(self, app: ASGIApp):
         self.app = app
 
+    # Paths to skip - these have large payloads that shouldn't be re-processed
+    SKIP_PATHS = {"/store/items", "/store/items/search"}
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Skip certain paths entirely to avoid body processing issues
+        path = scope.get("path", "")
+        if path in self.SKIP_PATHS:
             await self.app(scope, receive, send)
             return
 
