@@ -42,32 +42,38 @@ class DoubleEncodedJSONMiddleware:
                                 decoded = body.decode("utf-8")
                                 parsed = json.loads(decoded)
 
+                                # Only re-serialize if the JSON was double-encoded
+                                # (i.e., the first parse returned a string)
                                 if isinstance(parsed, str):
+                                    # Double-encoded: parse again and re-serialize
                                     parsed = json.loads(parsed)
+                                    new_body = json.dumps(parsed).encode("utf-8")
 
-                                new_body = json.dumps(parsed).encode("utf-8")
+                                    # Update headers for the new body
+                                    new_headers = []
+                                    for name, value in scope.get("headers", []):
+                                        if name in (b"content-type", b"content-length"):
+                                            continue
+                                        new_headers.append((name, value))
 
-                                # Update headers: content-type and content-length
-                                new_headers = []
-                                for name, value in scope.get("headers", []):
-                                    # Skip headers we're going to replace
-                                    if name in (b"content-type", b"content-length"):
-                                        continue
-                                    new_headers.append((name, value))
+                                    new_headers.append(
+                                        (b"content-type", b"application/json")
+                                    )
+                                    new_headers.append(
+                                        (b"content-length", str(len(new_body)).encode())
+                                    )
+                                    scope["headers"] = new_headers
 
-                                # Always set correct content-type
-                                new_headers.append(
-                                    (b"content-type", b"application/json")
-                                )
-                                # Update content-length to match new body size
-                                new_headers.append(
-                                    (b"content-length", str(len(new_body)).encode())
-                                )
-                                scope["headers"] = new_headers
+                                    return {
+                                        "type": "http.request",
+                                        "body": new_body,
+                                        "more_body": False,
+                                    }
 
+                                # JSON was NOT double-encoded - pass through unchanged
                                 return {
                                     "type": "http.request",
-                                    "body": new_body,
+                                    "body": body,
                                     "more_body": False,
                                 }
                             except (
