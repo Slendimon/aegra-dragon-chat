@@ -993,8 +993,12 @@ async def execute_run_async(
 
         # Execute using streaming to capture events for later replay
         event_counter = 0
-        final_output = None
+        final_output: Any = None
         has_interrupt = False
+        # Best-effort message capture for non-stream clients (e.g. /runs/wait)
+        # Some graphs may emit a final "values" chunk without messages; keep the last
+        # non-empty messages observed and merge into final output at the end.
+        last_messages: list[Any] | None = None
 
         # Prepare stream modes for execution
         if stream_mode is None:
@@ -1048,9 +1052,29 @@ async def execute_run_async(
                 if isinstance(event_data, dict) and "__interrupt__" in event_data:
                     has_interrupt = True
 
+                # Cache last non-empty messages seen in values events
+                if (
+                    isinstance(event_data, dict)
+                    and "messages" in event_data
+                    and isinstance(event_data.get("messages"), list)
+                    and len(event_data.get("messages") or []) > 0
+                ):
+                    last_messages = event_data["messages"]
+
                 # Track final output from values events (handles both "values" and "values|namespace")
                 if event_type.startswith("values"):
                     final_output = event_data
+
+        # Ensure final_output is a dict and merge cached messages if needed
+        if final_output is None or not isinstance(final_output, dict):
+            final_output = {} if final_output is None else {"result": final_output}
+
+        if last_messages and (
+            "messages" not in final_output
+            or not isinstance(final_output.get("messages"), list)
+            or len(final_output.get("messages") or []) == 0
+        ):
+            final_output["messages"] = last_messages
 
         if has_interrupt:
             await update_run_status(
