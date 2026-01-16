@@ -37,8 +37,10 @@ async def call_model(
     model = load_chat_model(runtime.context.model).bind_tools(TOOLS)
 
     # Format the system prompt. Customize this to change the agent's behavior.
-    system_message = runtime.context.system_prompt.format(
-        system_time=datetime.now(tz=UTC).isoformat()
+    # Use .replace() instead of .format() to avoid KeyError on user-provided
+    # prompts that may contain curly braces (e.g., {tool_name} placeholders).
+    system_message = runtime.context.system_prompt.replace(
+        "{system_time}", datetime.now(tz=UTC).isoformat()
     )
 
     # Get the model's response
