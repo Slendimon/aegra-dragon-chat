@@ -53,14 +53,15 @@ def build_user_context_section(metadata: Dict[str, Any]) -> str:
     return ""
 
 
-def build_datetime_context_section() -> str:
+def build_datetime_context_section(current_datetime: str | None = None) -> str:
     """
     Build a datetime context section with current Zulu time.
 
     Returns:
         Formatted string with current date and time information
     """
-    current_datetime = get_current_zulu_datetime()
+    if not current_datetime:
+        current_datetime = get_current_zulu_datetime()
     return f"\n\n## Información de contexto:\n- Fecha y hora actual: {current_datetime}\n"
 
 
