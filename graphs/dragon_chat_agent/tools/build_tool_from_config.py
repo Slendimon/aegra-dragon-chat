@@ -5,11 +5,13 @@ from urllib.parse import urlparse
 
 import anyio
 import requests
+import structlog
 from langchain_core.tools import StructuredTool
 from pydantic import ConfigDict, Field, create_model
 from requests import RequestException
 
 _OPENAI_TOOL_NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+logger = structlog.get_logger(__name__)
 
 
 def _sanitize_tool_name(name: str) -> Tuple[str, bool]:
@@ -63,6 +65,16 @@ def _validate_url(url: str) -> None:
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise ValueError(f"Invalid tool url: {url!r}")
 
+def _redact_url(url: str) -> str:
+    """Redact query/fragment (webhooks may contain secrets)."""
+    try:
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            return url
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    except Exception:
+        return url
+
 def build_tool_from_config(cfg: Dict[str, Any]) -> StructuredTool:
     """Create a StructuredTool from a config that comes in request.context.
 
@@ -80,6 +92,15 @@ def build_tool_from_config(cfg: Dict[str, Any]) -> StructuredTool:
     name, changed = _sanitize_tool_name(raw_name)
 
     url = str(cfg.get("url") or "")
+    logger.debug(
+        "dynamic_tool.build.start",
+        raw_name=raw_name or None,
+        sanitized_name=name,
+        name_changed=changed,
+        url=_redact_url(url) if url else None,
+        has_schema=bool(cfg.get("schema")),
+        has_headers=isinstance(cfg.get("headers"), dict) and len(cfg.get("headers") or {}) > 0,
+    )
     _validate_url(url)
 
     description = str(cfg.get("description") or "")
@@ -112,6 +133,15 @@ def build_tool_from_config(cfg: Dict[str, Any]) -> StructuredTool:
     headers = cfg.get("headers") or {}
     if not isinstance(headers, dict):
         headers = {}
+
+    logger.debug(
+        "dynamic_tool.build.schema",
+        tool_name=name,
+        properties_count=len(props) if isinstance(props, dict) else 0,
+        required_count=len(required),
+        headers_count=len(headers),
+        timeout=timeout,
+    )
 
     # 1) Create a dynamic Pydantic model from the JSON Schema, using aliases
     used: set[str] = set()
@@ -218,4 +248,11 @@ def build_tool_from_config(cfg: Dict[str, Any]) -> StructuredTool:
 
     # Keep originals for debugging/telemetry
     tool.metadata = {"original_name": raw_name, "url": url}
+    logger.info(
+        "dynamic_tool.build.succeeded",
+        tool_name=name,
+        raw_name=raw_name or None,
+        url=_redact_url(url),
+        properties_count=len(props) if isinstance(props, dict) else 0,
+    )
     return tool

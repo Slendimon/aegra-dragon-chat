@@ -10,7 +10,7 @@ from graphs.dragon_chat_agent.context import DragonAgentContext
 from graphs.dragon_chat_agent.utils.message_validator import validate_and_clean_messages
 from graphs.dragon_chat_agent.tools import build_tool_from_config
 
-logger = structlog.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 
 class PreAgentMiddleware(AgentMiddleware):
@@ -18,17 +18,73 @@ class PreAgentMiddleware(AgentMiddleware):
 
     def _ensure_context(self, request: ModelRequest) -> DragonAgentContext:
         context = getattr(request.runtime, "context", None)
-        if context is None or not isinstance(context, DragonAgentContext):
-            context = DragonAgentContext()
-            request.runtime.context = context
-        return context
+        if isinstance(context, DragonAgentContext):
+            return context
+
+        # IMPORTANT: runtime.context frequently arrives as a plain dict from API layers.
+        # Preserve any passed fields (especially tools) by coercing into DragonAgentContext.
+        if isinstance(context, dict):
+            try:
+                tools = context.get("tools", [])
+                if tools is None:
+                    tools = []
+                if isinstance(tools, dict):
+                    # Allow a single tool config dict to be passed.
+                    tools = [tools]
+
+                coerced = DragonAgentContext(
+                    system_prompt=context.get("system_prompt"),
+                    tools=tools if isinstance(tools, list) else [],
+                    dynamic_tools=context.get("dynamic_tools", {}) or {},
+                    metadata=context.get("metadata", {}) or {},
+                )
+                request.runtime.context = coerced
+                logger.debug(
+                    "dynamic_tools.context.coerced_from_dict",
+                    tools_count=len(coerced.tools or []),
+                    has_system_prompt=bool(coerced.system_prompt),
+                    metadata_keys=list((coerced.metadata or {}).keys()),
+                )
+                return coerced
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(
+                    "dynamic_tools.context.coercion_failed",
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    exc_info=True,
+                )
+
+        # Fallback: start from an empty context (avoid breaking the request).
+        coerced = DragonAgentContext()
+        request.runtime.context = coerced
+        logger.debug(
+            "dynamic_tools.context.created_empty",
+            prior_context_type=type(context).__name__ if context is not None else None,
+        )
+        return coerced
 
     @staticmethod
     def _extract_tool_configs(context: DragonAgentContext) -> Iterable[dict[str, Any]]:
         tools_cfg = context.tools
         if not tools_cfg:
             return []
-        return tools_cfg
+        # Defensive: tools must be a list[dict]; ignore invalid entries.
+        if not isinstance(tools_cfg, list):
+            logger.warning(
+                "dynamic_tools.context.tools_invalid_type",
+                tools_type=type(tools_cfg).__name__,
+            )
+            return []
+        valid: list[dict[str, Any]] = []
+        for item in tools_cfg:
+            if isinstance(item, dict):
+                valid.append(item)
+            else:
+                logger.warning(
+                    "dynamic_tools.context.tools_invalid_item",
+                    item_type=type(item).__name__,
+                )
+        return valid
 
     @staticmethod
     def _to_llm_tool_spec(cfg: dict[str, Any], *, tool_name: str | None = None) -> dict[str, Any]:
@@ -47,16 +103,34 @@ class PreAgentMiddleware(AgentMiddleware):
         dynamic_tools: Dict[str, Any] = {}
         tool_specs: List[dict[str, Any]] = []
 
-        for cfg in self._extract_tool_configs(context):
+        tool_cfgs = list(self._extract_tool_configs(context))
+        logger.debug(
+            "dynamic_tools.build.start",
+            tools_count=len(tool_cfgs),
+        )
+
+        for cfg in tool_cfgs:
             try:
                 tool = build_tool_from_config(cfg)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Failed to build dynamic tool %s: %s", cfg.get("name"), exc)
+                logger.warning(
+                    "dynamic_tools.build.failed",
+                    tool_name=cfg.get("name"),
+                    url=cfg.get("url"),
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    exc_info=True,
+                )
                 continue
 
             dynamic_tools[tool.name] = tool
             # IMPORTANT: use the *actual* built tool name (may be sanitized for provider compatibility)
             tool_specs.append(self._to_llm_tool_spec(cfg, tool_name=tool.name))
+            logger.info(
+                "dynamic_tools.build.succeeded",
+                tool_name=tool.name,
+                original_name=getattr(tool, "metadata", {}).get("original_name"),
+            )
 
         return dynamic_tools, tool_specs
 
@@ -203,11 +277,7 @@ class PreAgentMiddleware(AgentMiddleware):
         tool_name = request.tool_call["name"]
         tool_call_id = request.tool_call["id"]
 
-        logger.info(
-            "wrap_tool_call invoked for tool '%s', tool_call_id='%s'",
-            tool_name,
-            tool_call_id,
-        )
+        logger.info("dynamic_tools.call.wrap", tool_name=tool_name, tool_call_id=tool_call_id)
 
         # First try to lookup in existing dynamic_tools
         tool = self._lookup_runtime_tool(request)
@@ -216,7 +286,7 @@ class PreAgentMiddleware(AgentMiddleware):
         # If not found, try to rebuild dynamic tools from context
         # This handles the case where context.dynamic_tools was lost between model call and tool call
         if tool is None and not available_tools:
-            logger.info("No dynamic_tools found, attempting to rebuild from context.tools")
+            logger.info("dynamic_tools.call.rebuild_attempt", tool_name=tool_name)
             context = self._ensure_context_from_request(request)
             if context and context.tools:
                 dynamic_tools, _ = self._build_runtime_tooling(context)
@@ -224,31 +294,31 @@ class PreAgentMiddleware(AgentMiddleware):
                 tool = dynamic_tools.get(tool_name)
                 available_tools = list(dynamic_tools.keys())
                 logger.info(
-                    "Rebuilt dynamic_tools: found=%s, available=%s",
-                    tool is not None,
-                    available_tools,
+                    "dynamic_tools.call.rebuild_result",
+                    found=tool is not None,
+                    available=available_tools,
                 )
 
         logger.info(
-            "Tool lookup result: found=%s, available_dynamic_tools=%s",
-            tool is not None,
-            available_tools,
+            "dynamic_tools.call.lookup_result",
+            found=tool is not None,
+            available_dynamic_tools=available_tools,
         )
 
         if tool is None:
             # Try the default handler for static tools
-            logger.info("Tool '%s' not in dynamic_tools, trying static handler", tool_name)
+            logger.info("dynamic_tools.call.fallback_to_static", tool_name=tool_name)
             try:
                 return handler(request)
             except Exception as exc:
                 # Tool not found in static tools either - return error message
                 logger.error(
-                    "Tool '%s' not found in dynamic_tools or static tools. "
-                    "Available dynamic tools: %s. Error: %s (%s)",
-                    tool_name,
-                    available_tools,
-                    exc,
-                    type(exc).__name__,
+                    "dynamic_tools.call.not_found",
+                    tool_name=tool_name,
+                    available_dynamic_tools=available_tools,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    exc_info=True,
                 )
                 return ToolMessage(
                     content=f"Error: Tool '{tool_name}' is not available. The tool may not be configured correctly or the context was lost.",
@@ -257,11 +327,18 @@ class PreAgentMiddleware(AgentMiddleware):
                     status="error",
                 )
 
-        logger.info("Executing dynamic tool '%s'", tool_name)
+        logger.info("dynamic_tools.call.execute", tool_name=tool_name, tool_call_id=tool_call_id)
         try:
             result = tool.invoke(request.tool_call["args"])
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Dynamic tool %s failed: %s", tool.name, exc)
+            logger.warning(
+                "dynamic_tools.call.failed",
+                tool_name=tool.name,
+                tool_call_id=tool_call_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
             return ToolMessage(
                 content=str(exc),
                 name=tool_name,
@@ -269,7 +346,7 @@ class PreAgentMiddleware(AgentMiddleware):
                 status="error",
             )
 
-        logger.info("Dynamic tool '%s' completed successfully", tool_name)
+        logger.info("dynamic_tools.call.succeeded", tool_name=tool_name, tool_call_id=tool_call_id)
         return ToolMessage(
             content=msg_content_output(result),
             name=tool_name,
@@ -280,11 +357,7 @@ class PreAgentMiddleware(AgentMiddleware):
         tool_name = request.tool_call["name"]
         tool_call_id = request.tool_call["id"]
 
-        logger.info(
-            "awrap_tool_call invoked for tool '%s', tool_call_id='%s'",
-            tool_name,
-            tool_call_id,
-        )
+        logger.info("dynamic_tools.call.awrap", tool_name=tool_name, tool_call_id=tool_call_id)
 
         # First try to lookup in existing dynamic_tools
         tool = self._lookup_runtime_tool(request)
@@ -293,7 +366,7 @@ class PreAgentMiddleware(AgentMiddleware):
         # If not found, try to rebuild dynamic tools from context
         # This handles the case where context.dynamic_tools was lost between model call and tool call
         if tool is None and not available_tools:
-            logger.info("No dynamic_tools found, attempting to rebuild from context.tools")
+            logger.info("dynamic_tools.call.rebuild_attempt", tool_name=tool_name)
             context = self._ensure_context_from_request(request)
             if context and context.tools:
                 dynamic_tools, _ = self._build_runtime_tooling(context)
@@ -301,31 +374,31 @@ class PreAgentMiddleware(AgentMiddleware):
                 tool = dynamic_tools.get(tool_name)
                 available_tools = list(dynamic_tools.keys())
                 logger.info(
-                    "Rebuilt dynamic_tools: found=%s, available=%s",
-                    tool is not None,
-                    available_tools,
+                    "dynamic_tools.call.rebuild_result",
+                    found=tool is not None,
+                    available=available_tools,
                 )
 
         logger.info(
-            "Tool lookup result: found=%s, available_dynamic_tools=%s",
-            tool is not None,
-            available_tools,
+            "dynamic_tools.call.lookup_result",
+            found=tool is not None,
+            available_dynamic_tools=available_tools,
         )
 
         if tool is None:
             # Try the default handler for static tools
-            logger.info("Tool '%s' not in dynamic_tools, trying static handler", tool_name)
+            logger.info("dynamic_tools.call.fallback_to_static", tool_name=tool_name)
             try:
                 return await handler(request)
             except Exception as exc:
                 # Tool not found in static tools either - return error message
                 logger.error(
-                    "Tool '%s' not found in dynamic_tools or static tools. "
-                    "Available dynamic tools: %s. Error: %s (%s)",
-                    tool_name,
-                    available_tools,
-                    exc,
-                    type(exc).__name__,
+                    "dynamic_tools.call.not_found",
+                    tool_name=tool_name,
+                    available_dynamic_tools=available_tools,
+                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    exc_info=True,
                 )
                 return ToolMessage(
                     content=f"Error: Tool '{tool_name}' is not available. The tool may not be configured correctly or the context was lost.",
@@ -334,11 +407,18 @@ class PreAgentMiddleware(AgentMiddleware):
                     status="error",
                 )
 
-        logger.info("Executing dynamic tool '%s'", tool_name)
+        logger.info("dynamic_tools.call.execute", tool_name=tool_name, tool_call_id=tool_call_id)
         try:
             result = await tool.ainvoke(request.tool_call["args"])
         except Exception as exc:  # noqa: BLE001
-            logger.warning("Dynamic tool %s failed: %s", tool.name, exc)
+            logger.warning(
+                "dynamic_tools.call.failed",
+                tool_name=tool.name,
+                tool_call_id=tool_call_id,
+                error=str(exc),
+                error_type=type(exc).__name__,
+                exc_info=True,
+            )
             return ToolMessage(
                 content=str(exc),
                 name=tool_name,
@@ -346,7 +426,7 @@ class PreAgentMiddleware(AgentMiddleware):
                 status="error",
             )
 
-        logger.info("Dynamic tool '%s' completed successfully", tool_name)
+        logger.info("dynamic_tools.call.succeeded", tool_name=tool_name, tool_call_id=tool_call_id)
         return ToolMessage(
             content=msg_content_output(result),
             name=tool_name,
